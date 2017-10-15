@@ -37,6 +37,11 @@ func showMsg(msg string) {
 	_, _ = fmt.Scanln()
 }
 func getConfig() *config {
+	_, err = redisConn.Do("SET", "names", `{"bss":[],"oss":[],"ip":"10.214,169,99"}`, "NX")
+	if err != nil {
+		showMsg("出错!\n\n初始化配置信息失败.")
+		log.Fatal(err)
+	}
 	data, err := redis.Bytes(redisConn.Do("GET", "names"))
 	if err != nil {
 		showMsg("出错!\n\n读取配置信息失败.")
@@ -238,7 +243,7 @@ func main() {
 	flag.Usage = usage
 
 	flag.Parse()
-	*conn = "127.0.0.1:13203"
+	//*conn = "127.0.0.1:13203"
 	logfile, _ := os.Create(filepath.Join(os.TempDir(), "hosts.log"))
 	defer logfile.Close()
 	log.SetOutput(logfile)
