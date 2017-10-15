@@ -37,6 +37,7 @@ func showMsg(msg string) {
 	_, _ = fmt.Scanln()
 }
 func getConfig() *config {
+	var err error
 	_, err = redisConn.Do("SET", "names", `{"bss":[],"oss":[],"ip":"10.214,169,99"}`, "NX")
 	if err != nil {
 		showMsg("出错!\n\n初始化配置信息失败.")
