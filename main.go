@@ -6,17 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/garyburd/redigo/redis"
 )
-
-const configURL = "https://raw.githubusercontent.com/breadysimon/kube-deploy/master/README.md" // "http://10.214.169.111:30883/report/names.json"
 
 type config struct {
 	Bss []string
@@ -39,36 +36,8 @@ func showMsg(msg string) {
 	fmt.Println("---------------------------------------")
 	_, _ = fmt.Scanln()
 }
-func getConfigDepreciated() *config {
-	resp, err := http.Get(configURL)
-	if err != nil {
-		showMsg("出错!\n\n网络连接失败.\n请确认可以访问万达云公司内网.")
-		log.Fatal(err)
-	}
-
-	defer resp.Body.Close()
-
-	data, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		showMsg("出错!\n\n读取配置文件失败.")
-		log.Fatal(err)
-	}
-	var conf config
-	err = json.Unmarshal(data, &conf)
-	if err != nil {
-		showMsg("出错\n\n配置文件解析失败.")
-		log.Fatal(err)
-	}
-	return &conf
-}
-func getConfig(connStr string) *config {
-	conn, err := redis.Dial("tcp", connStr)
-	if err != nil {
-		showMsg("出错!\n\n网络连接失败.\n请确认可以访问万达云公司内网.")
-		log.Fatal(err)
-	}
-	defer conn.Close()
-	data, err := redis.Bytes(conn.Do("GET", "names"))
+func getConfig() *config {
+	data, err := redis.Bytes(redisConn.Do("GET", "names"))
 	if err != nil {
 		showMsg("出错!\n\n读取配置信息失败.")
 		log.Fatal(err)
@@ -85,7 +54,6 @@ func getConfig(connStr string) *config {
 	return &conf
 }
 func getHostsFilePath() string {
-
 	windir := os.Getenv("windir")
 	if windir == "" {
 		return "/etc/hosts"
@@ -164,63 +132,19 @@ func replaceHostsFile(tempFile string) {
 		log.Fatal(err)
 	}
 }
-func setConfig(connStr string, conf *config) {
-	conn, err := redis.Dial("tcp", connStr)
-	if err != nil {
-		showMsg("出错!\n\n网络连接失败.\n请确认可以访问万达云公司内网.")
-		log.Fatal(err)
-	}
-	defer conn.Close()
+func setConfig(conf *config) {
 	data, err := json.Marshal(conf)
 	if err != nil {
 		showMsg("出错!\n\n配置信息转换失败.")
 		log.Fatal(err)
 	}
-	_, err = conn.Do("SET", "names", string(data))
+	_, err = redisConn.Do("SET", "names", string(data))
 	if err != nil {
 		showMsg("出错!\n\n配置信息保存失败.")
 		log.Fatal(err)
 	}
 }
-func addNames(connStr string, subset string, names []string) {
-	conf := getConfig(connStr)
-	lst := conf.Bss
-	if subset == "oss" {
-		lst = conf.Oss
-	}
-	m := make(map[string]bool)
-	for _, x := range lst {
-		m[x] = true
-	}
-	for _, x := range names {
-		m[x] = true
-	}
-	lst = []string{}
-	for k, _ := range m {
-		lst = append(lst, k)
-	}
-	if subset == "oss" {
-		conf.Oss = lst
-	} else {
-		conf.Bss = lst
-	}
-	setConfig(connStr, conf)
-}
-func setNames(connStr string, subset string, names []string) {
-	delNames(connStr, names)
-
-	conf := getConfig(connStr)
-
-	if subset == "oss" {
-		conf.Oss = names
-	} else {
-		conf.Bss = names
-	}
-	setConfig(connStr, conf)
-}
-
-func delNames(connStr string, names []string) {
-	conf := getConfig(connStr)
+func toCollection(conf *config) map[string]string {
 	m := make(map[string]string)
 	for _, x := range conf.Bss {
 		m[x] = "bss"
@@ -228,11 +152,12 @@ func delNames(connStr string, names []string) {
 	for _, x := range conf.Oss {
 		m[x] = "oss"
 	}
-	for _, x := range names {
-		delete(m, x)
-	}
+	return m
+}
+func toLists(m map[string]string, conf *config) {
 	conf.Bss = []string{}
 	conf.Oss = []string{}
+
 	for k, v := range m {
 		if v == "bss" {
 			conf.Bss = append(conf.Bss, k)
@@ -240,10 +165,42 @@ func delNames(connStr string, names []string) {
 			conf.Oss = append(conf.Oss, k)
 		}
 	}
-	setConfig(connStr, conf)
+	sort.Strings(conf.Bss)
+	sort.Strings(conf.Oss)
 }
-func showNames(connStr string) {
-	conf := getConfig(connStr)
+func addNames(subset string, names []string) {
+	conf := getConfig()
+	m := toCollection(conf)
+	for _, x := range names {
+		m[x] = subset
+	}
+	toLists(m, conf)
+	setConfig(conf)
+}
+func setNames(subset string, names []string) {
+	delNames(names)
+
+	conf := getConfig()
+
+	if subset == "oss" {
+		conf.Oss = names
+	} else {
+		conf.Bss = names
+	}
+	setConfig(conf)
+}
+
+func delNames(names []string) {
+	conf := getConfig()
+	m := toCollection(conf)
+	for _, x := range names {
+		delete(m, x)
+	}
+	toLists(m, conf)
+	setConfig(conf)
+}
+func showNames() {
+	conf := getConfig()
 	fmt.Print("BSS:")
 	for _, x := range conf.Bss {
 		fmt.Printf(" %s", x)
@@ -255,6 +212,21 @@ func showNames(connStr string) {
 	}
 	fmt.Println()
 }
+
+var redisConn redis.Conn
+
+func connect(connStr string) {
+	var err error
+	redisConn, err = redis.Dial("tcp", connStr)
+	if err != nil {
+		showMsg("出错!\n\n网络连接失败.\n请确认可以访问万达云公司内网.")
+		log.Fatal(err)
+	}
+}
+func disconnect() {
+	redisConn.Close()
+}
+
 func main() {
 	addOSS := flag.Bool("o", false, "添加OSS子域名列表")
 	setOSS := flag.Bool("O", false, "替换OSS子域名列表")
@@ -266,10 +238,13 @@ func main() {
 	flag.Usage = usage
 
 	flag.Parse()
-
+	*conn = "127.0.0.1:13203"
 	logfile, _ := os.Create(filepath.Join(os.TempDir(), "hosts.log"))
 	defer logfile.Close()
 	log.SetOutput(logfile)
+
+	connect(*conn)
+	defer disconnect()
 
 	subset := "bss"
 	if *addOSS || *setOSS {
@@ -277,19 +252,19 @@ func main() {
 	}
 	switch {
 	case *addBSS || *addOSS:
-		addNames(*conn, subset, flag.Args())
-		showNames(*conn)
+		addNames(subset, flag.Args())
+		showNames()
 	case *setBSS || *setOSS:
-		setNames(*conn, subset, flag.Args())
-		showNames(*conn)
+		setNames(subset, flag.Args())
+		showNames()
 	case *del:
-		delNames(*conn, flag.Args())
-		showNames(*conn)
+		delNames(flag.Args())
+		showNames()
 	case *lst:
-		showNames(*conn)
+		showNames()
 	default:
 		if len(flag.Args()) == 0 {
-			replaceHostsFile(makeTempHostsFile(getConfig(*conn)))
+			replaceHostsFile(makeTempHostsFile(getConfig()))
 			showMsg("成功!\n\n已完成hosts文件更新.")
 		} else {
 			flag.Usage()
