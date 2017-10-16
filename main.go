@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,9 +17,10 @@ import (
 )
 
 type config struct {
-	Bss []string
-	Oss []string
-	IP  string
+	Bss    []string
+	Oss    []string
+	IP     string
+	Secret string
 }
 
 func getInstruction() string {
@@ -38,7 +40,7 @@ func showMsg(msg string) {
 }
 func getConfig() *config {
 	var err error
-	_, err = redisConn.Do("SET", "names", `{"bss":[],"oss":[],"ip":"10.214,169,99"}`, "NX")
+	_, err = redisConn.Do("SET", "names", `{"bss":[],"oss":[],"ip":"10.214,169,99","secret":"d0970714757783e6cf17b26fb8e2298f"}`, "NX")
 	if err != nil {
 		showMsg("出错!\n\n初始化配置信息失败.")
 		log.Fatal(err)
@@ -232,7 +234,16 @@ func connect(connStr string) {
 func disconnect() {
 	redisConn.Close()
 }
-
+func passwordOK(pass string) bool {
+	conf := getConfig()
+	ctx := md5.New()
+	ctx.Write([]byte(pass))
+	secret := fmt.Sprintf("%x", ctx.Sum(nil))
+	if secret != conf.Secret {
+		return false
+	}
+	return true
+}
 func main() {
 	addOSS := flag.Bool("o", false, "添加OSS子域名列表")
 	setOSS := flag.Bool("O", false, "替换OSS子域名列表")
@@ -241,6 +252,7 @@ func main() {
 	conn := flag.String("c", "10.214.169.111:31489", "Redis连接参数")
 	del := flag.Bool("d", false, "删除子域名列表")
 	lst := flag.Bool("l", false, "显示子域名列表")
+	passwd := flag.String("p", "", "修改配置时提供口令")
 	flag.Usage = usage
 
 	flag.Parse()
@@ -252,6 +264,12 @@ func main() {
 	connect(*conn)
 	defer disconnect()
 
+	if *addBSS || *setBSS || *addOSS || *setOSS || *del {
+		if !passwordOK(*passwd) {
+			showMsg("请输入正确的口令！")
+			log.Fatal("error password.")
+		}
+	}
 	subset := "bss"
 	if *addOSS || *setOSS {
 		subset = "oss"
@@ -284,7 +302,7 @@ WandaCloud cloud.wanda.cn
 子域名配置工具, v1.0
 -------------------------------------------------
 用法: 
-names [-oObBdl] [-c 数据连接] [一个或多个子域名]
+names [-oObBdl] [-c 数据连接] [-p 口令] [一个或多个子域名]
 无参数时修改本机hosts文件,定义各子域名IP映射.
 参数:
 `)
