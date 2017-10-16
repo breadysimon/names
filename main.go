@@ -25,7 +25,7 @@ func getInstruction() string {
 	if os.Getenv("windir") != "" {
 		return "  1.右键点击文件名\n  2.选择'以管理员身份运行'\n  3.如果有系统安全警告请允许执行"
 	} else {
-		return "  请运行命令 sudo wdchosts"
+		return "  请运行命令 sudo ./names"
 	}
 
 }
