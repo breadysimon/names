@@ -12,15 +12,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/garyburd/redigo/redis"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type config struct {
 	Bss    []string
 	Oss    []string
 	IP     string
-	Secret string
+	Cipher string
 }
 
 func getInstruction() string {
@@ -40,7 +42,7 @@ func showMsg(msg string) {
 }
 func getConfig() *config {
 	var err error
-	_, err = redisConn.Do("SET", "names", `{"bss":[],"oss":[],"ip":"10.214,169,99","secret":"d0970714757783e6cf17b26fb8e2298f"}`, "NX")
+	_, err = redisConn.Do("SET", "names", `{"bss":[],"oss":[],"ip":"10.214,169,99","Cipher":"d0970714757783e6cf17b26fb8e2298f"}`, "NX")
 	if err != nil {
 		showMsg("出错!\n\n初始化配置信息失败.")
 		log.Fatal(err)
@@ -238,8 +240,8 @@ func passwordOK(pass string) bool {
 	conf := getConfig()
 	ctx := md5.New()
 	ctx.Write([]byte(pass))
-	secret := fmt.Sprintf("%x", ctx.Sum(nil))
-	if secret != conf.Secret {
+	cipher := fmt.Sprintf("%x", ctx.Sum(nil))
+	if cipher != conf.Cipher {
 		return false
 	}
 	return true
@@ -265,8 +267,14 @@ func main() {
 	defer disconnect()
 
 	if *addBSS || *setBSS || *addOSS || *setOSS || *del {
+		if *passwd == "" {
+			fmt.Print("\n口令:")
+			bytes, _ := terminal.ReadPassword(int(syscall.Stdin))
+			fmt.Println()
+			*passwd = string(bytes)
+		}
 		if !passwordOK(*passwd) {
-			showMsg("请输入正确的口令！")
+			showMsg("请使用正确的口令！")
 			log.Fatal("error password.")
 		}
 	}
